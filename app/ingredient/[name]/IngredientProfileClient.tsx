@@ -2,8 +2,8 @@
 
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 import Link from 'next/link';
-import { fmt } from '@/lib/supabase';
-import type { Node, Substitute } from '@/lib/supabase';
+import { fmt } from '@/lib/db';
+import type { Node, Substitute } from '@/lib/db';
 
 const BADGE_MAP: Record<string, string> = {
   'Spice': 'badge-amber', 'Fruit': 'badge-green', 'Dairy': 'badge-blue',
@@ -40,7 +40,6 @@ interface Props {
 export default function IngredientProfileClient({ node, molecules, totalMolecules, coIngredients, substitutes }: Props) {
   const radarData = buildRadarData(node, substitutes);
   const funcSubs = substitutes.filter(s => s.sub_type === 'functional').slice(0, 3);
-  const aromSubs = substitutes.filter(s => s.sub_type === 'aromatic').slice(0, 3);
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -120,7 +119,7 @@ export default function IngredientProfileClient({ node, molecules, totalMolecule
               <div className="card">
                 <h2 style={{ fontSize: 16, marginBottom: 16 }}>Top Functional Substitutes</h2>
                 {funcSubs.map((s, i) => (
-                  <Link key={i} href={`/ingredient/${encodeURIComponent(s.substitute.name)}`} style={{ textDecoration: 'none' }}>
+                  <Link key={i} href={`/ingredient/${encodeURIComponent(s.substitute.name)}`} style={{ textDecoration: 'none', color: 'var(--text-primary)' }}>
                     <div style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer',
@@ -168,7 +167,7 @@ export default function IngredientProfileClient({ node, molecules, totalMolecule
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {coIngredients.map((c, i) => (
-                  <Link key={i} href={`/ingredient/${encodeURIComponent(c.name)}`} style={{ textDecoration: 'none' }}>
+                  <Link key={i} href={`/ingredient/${encodeURIComponent(c.name)}`} style={{ textDecoration: 'none', color: 'var(--text-primary)' }}>
                     <div style={{
                       display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
                       borderRadius: 8, transition: 'background 0.15s', cursor: 'pointer',

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { supabase, fmt } from '@/lib/supabase';
+import { db, fmt, rankSuggestions } from '@/lib/db';
 import { useRouter } from 'next/navigation';
 
 interface GraphNode { id: string; name: string; type: string; category: string | null; }
@@ -26,6 +26,12 @@ export default function IngredientExplorerPage() {
   const [notFound,  setNotFound]  = useState('');                // last search that returned nothing
   const [searching, setSearching] = useState(false);
 
+  // Autocomplete (raw snake_case names; displayed with fmt)
+  const [allIngredients, setAllIngredients] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSugg, setShowSugg] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+
   /* ── graph state */
   const [nodes,  setNodes]    = useState<GraphNode[]>([]);
   const [edges,  setEdges]    = useState<GraphEdge[]>([]);
@@ -41,15 +47,30 @@ export default function IngredientExplorerPage() {
   const mouseRef    = useRef<{ x: number; y: number }>({ x: -999, y: -999 });
   const transformed = useRef<{ offsetX: number; offsetY: number; scale: number }>({ offsetX: 0, offsetY: 0, scale: 1 });
 
+  useEffect(() => {
+    db.from('nodes').select('name').eq('type', 'ingredient').order('name')
+      .then(({ data }) => {
+        if (data) setAllIngredients(data.map((d: { name: string }) => d.name));
+      });
+  }, []);
+
+  useEffect(() => {
+    const taken = new Set(selected.map(s => s.name));
+    setSuggestions(rankSuggestions(allIngredients.filter(n => !taken.has(n)), inputVal));
+    setActiveIdx(-1);
+  }, [inputVal, allIngredients, selected]);
+
   /* ─── Search: look up exact / closest match and add to selected ── */
-  const handleSearch = async () => {
-    const q = inputVal.trim();
+  const handleSearch = async (override?: string) => {
+    const q = (override ?? inputVal).trim();
     if (!q) return;
+    setShowSugg(false);
+    setActiveIdx(-1);
     setSearching(true);
     setNotFound('');
 
     // Try exact match first (ilike = case-insensitive)
-    const { data: exact } = await supabase
+    const { data: exact } = await db
       .from('nodes')
       .select('id, name, type, category')
       .eq('type', 'ingredient')
@@ -60,7 +81,7 @@ export default function IngredientExplorerPage() {
 
     // Fallback: starts-with / contains
     if (!match) {
-      const { data: fuzzy } = await supabase
+      const { data: fuzzy } = await db
         .from('nodes')
         .select('id, name, type, category')
         .eq('type', 'ingredient')
@@ -107,9 +128,9 @@ export default function IngredientExplorerPage() {
     for (let i = 0; i < queryIds.length; i += CHUNK) {
       const chunk = queryIds.slice(i, i + CHUNK);
       const [rA, rB] = await Promise.all([
-        supabase.from('edges').select('source, target, edge_type, weight')
+        db.from('edges').select('source, target, edge_type, weight')
           .eq('edge_type', 'CO_OCCURS').in('source', chunk).limit(3000),
-        supabase.from('edges').select('source, target, edge_type, weight')
+        db.from('edges').select('source, target, edge_type, weight')
           .eq('edge_type', 'CO_OCCURS').in('target', chunk).limit(3000),
       ]);
       rawCo.push(...((rA.data ?? []) as GraphEdge[]));
@@ -136,7 +157,7 @@ export default function IngredientExplorerPage() {
     /* 3. Fetch co-pair nodes */
     const coPairNodes: GraphNode[] = [];
     for (let i = 0; i < coPairArr.length; i += CHUNK) {
-      const { data } = await supabase.from('nodes').select('id, name, type, category')
+      const { data } = await db.from('nodes').select('id, name, type, category')
         .in('id', coPairArr.slice(i, i + CHUNK));
       if (data) coPairNodes.push(...(data as GraphNode[]));
     }
@@ -155,14 +176,14 @@ export default function IngredientExplorerPage() {
     }
 
     /* 5. Molecules */
-    let molNodes: GraphNode[]    = [];
-    let containsEdges: GraphEdge[] = [];
+    const molNodes: GraphNode[]    = [];
+    const containsEdges: GraphEdge[] = [];
 
     if (showMols) {
       const allIngrIds = [...queryIds, ...coPairArr];
       const rawCt: GraphEdge[] = [];
       for (let i = 0; i < allIngrIds.length; i += CHUNK) {
-        const { data } = await supabase.from('edges').select('source, target, edge_type, weight')
+        const { data } = await db.from('edges').select('source, target, edge_type, weight')
           .eq('edge_type', 'CONTAINS').in('source', allIngrIds.slice(i, i + CHUNK)).limit(3000);
         if (data) rawCt.push(...(data as GraphEdge[]));
       }
@@ -174,7 +195,7 @@ export default function IngredientExplorerPage() {
 
       const molIdList = [...new Set(containsEdges.map(e => e.target))];
       for (let i = 0; i < molIdList.length; i += CHUNK) {
-        const { data } = await supabase.from('nodes').select('id, name, type, category')
+        const { data } = await db.from('nodes').select('id, name, type, category')
           .in('id', molIdList.slice(i, i + CHUNK));
         if (data) molNodes.push(...(data as GraphNode[]));
       }
@@ -370,7 +391,7 @@ export default function IngredientExplorerPage() {
     mouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleClick = useCallback(() => {
     if (!hovered || hovered.type !== 'ingredient') return;
     router.push(`/ingredient/${encodeURIComponent(hovered.name)}`);
   }, [hovered, router]);
@@ -428,17 +449,65 @@ export default function IngredientExplorerPage() {
 
           {/* Input row */}
           <div style={{ display: 'flex', gap: 10 }}>
-            <input
-              value={inputVal}
-              onChange={e => { setInputVal(e.target.value); setNotFound(''); }}
-              onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }}
-              placeholder="e.g. chicken, lemon, apple…"
-              className="input"
-              style={{ flex: 1, padding: '11px 18px', fontSize: 14 }}
-              disabled={searching}
-            />
+            <div style={{ flex: 1, position: 'relative' }}>
+              <input
+                value={inputVal}
+                onChange={e => { setInputVal(e.target.value); setNotFound(''); setShowSugg(true); }}
+                onKeyDown={e => {
+                  if (!showSugg || suggestions.length === 0) {
+                    if (e.key === 'Enter') handleSearch();
+                    return;
+                  }
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setActiveIdx(i => Math.min(i + 1, suggestions.length - 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setActiveIdx(i => Math.max(i - 1, -1));
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSearch(activeIdx >= 0 && activeIdx < suggestions.length ? suggestions[activeIdx] : undefined);
+                  } else if (e.key === 'Escape') {
+                    setShowSugg(false); setActiveIdx(-1);
+                  }
+                }}
+                onFocus={() => setShowSugg(true)}
+                onBlur={() => setTimeout(() => setShowSugg(false), 150)}
+                placeholder="e.g. chicken, lemon, apple…"
+                className="input"
+                style={{ width: '100%', padding: '11px 18px', fontSize: 14 }}
+                disabled={searching}
+                autoComplete="off"
+              />
+              {showSugg && suggestions.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 999,
+                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  borderRadius: 12, overflow: 'hidden', boxShadow: '0 16px 40px rgba(0,0,0,0.4)',
+                }}>
+                  {suggestions.map((s, i) => (
+                    <div key={s}
+                      onMouseDown={e => { e.preventDefault(); handleSearch(s); }}
+                      onMouseEnter={() => setActiveIdx(i)}
+                      onMouseLeave={() => setActiveIdx(-1)}
+                      style={{
+                        padding: '12px 18px', cursor: 'pointer', fontSize: 14,
+                        borderBottom: '1px solid var(--border)',
+                        display: 'flex', alignItems: 'center', gap: 8, transition: 'background 0.15s',
+                        background: i === activeIdx ? 'var(--accent-glow)' : 'transparent',
+                        borderLeft: i === activeIdx ? '3px solid var(--accent)' : '3px solid transparent',
+                      }}
+                    >
+                      <span style={{ color: 'var(--accent)', fontSize: 12 }}>🌿</span>
+                      <span style={{ flex: 1 }}>{fmt(s)}</span>
+                      {i === activeIdx && <span style={{ fontSize: 10, color: 'var(--accent)', opacity: 0.7 }}>↵</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
-              onClick={handleSearch}
+              onClick={() => handleSearch()}
               disabled={searching || !inputVal.trim()}
               className="btn-primary"
               style={{ padding: '11px 24px', fontSize: 14, flexShrink: 0 }}

@@ -1,6 +1,6 @@
-import { supabase, fmt, type Node, type Substitute } from '@/lib/supabase';
+import { db } from '@/lib/localdb/engine';
+import type { Node, Substitute } from '@/lib/db';
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
 import type { Metadata } from 'next';
 import IngredientProfileClient from './IngredientProfileClient';
 
@@ -17,7 +17,7 @@ export default async function IngredientProfilePage({ params }: Props) {
   const rawName = decodeURIComponent(name).toLowerCase();
 
   // Fetch the ingredient node
-  const { data: nodes } = await supabase
+  const { data: nodes } = await db
     .from('nodes')
     .select('*')
     .eq('type', 'ingredient')
@@ -28,7 +28,7 @@ export default async function IngredientProfilePage({ params }: Props) {
   const node = nodes[0] as Node;
 
   // Fetch connected molecules (CONTAINS edges)
-  const { data: molEdges } = await supabase
+  const { data: molEdges } = await db
     .from('edges')
     .select('target')
     .eq('source', node.id)
@@ -36,8 +36,8 @@ export default async function IngredientProfilePage({ params }: Props) {
     .limit(200);
 
   // Fetch co-occurring ingredients
-  const { data: coEdgesA } = await supabase.from('edges').select('target').eq('source', node.id).eq('edge_type', 'CO_OCCURS').limit(10);
-  const { data: coEdgesB } = await supabase.from('edges').select('source').eq('target', node.id).eq('edge_type', 'CO_OCCURS').limit(10);
+  const { data: coEdgesA } = await db.from('edges').select('target').eq('source', node.id).eq('edge_type', 'CO_OCCURS').limit(10);
+  const { data: coEdgesB } = await db.from('edges').select('source').eq('target', node.id).eq('edge_type', 'CO_OCCURS').limit(10);
 
   // Gather molecule node IDs
   const molIds = (molEdges ?? []).map((e: { target: string }) => e.target);
@@ -56,7 +56,7 @@ export default async function IngredientProfilePage({ params }: Props) {
     const shareCounts = new Map<string, number>();
     for (let i = 0; i < molIds.length; i += CHUNK) {
       const chunk = molIds.slice(i, i + CHUNK);
-      const { data: shareEdges } = await supabase
+      const { data: shareEdges } = await db
         .from('edges').select('target').eq('edge_type', 'CONTAINS').in('target', chunk).limit(5000);
       for (const row of (shareEdges ?? []) as { target: string }[]) {
         shareCounts.set(row.target, (shareCounts.get(row.target) ?? 0) + 1);
@@ -69,16 +69,16 @@ export default async function IngredientProfilePage({ params }: Props) {
 
   // Fetch molecule names for top 20 only
   const { data: molNodes } = top20MolIds.length
-    ? await supabase.from('nodes').select('id, name, type, category').in('id', top20MolIds)
+    ? await db.from('nodes').select('id, name, type, category').in('id', top20MolIds)
     : { data: [] };
 
   // Fetch co-ingredient names
   const { data: coNodes } = coIds.length
-    ? await supabase.from('nodes').select('id, name, type, category').in('id', coIds)
+    ? await db.from('nodes').select('id, name, type, category').in('id', coIds)
     : { data: [] };
 
   // Fetch pre-computed substitutes (two-step: rows first, then node details)
-  const { data: rawSubs } = await supabase
+  const { data: rawSubs } = await db
     .from('substitutes')
     .select('id, ingredient_id, substitute_id, sub_type, cos_sim, mol_pct, score, rank')
     .eq('ingredient_id', node.id)
@@ -90,7 +90,7 @@ export default async function IngredientProfilePage({ params }: Props) {
 
   if (subRows.length > 0) {
     const subIds = [...new Set(subRows.map((s: { substitute_id: string }) => s.substitute_id))];
-    const { data: subNodeData } = await supabase
+    const { data: subNodeData } = await db
       .from('nodes')
       .select('*')
       .in('id', subIds);

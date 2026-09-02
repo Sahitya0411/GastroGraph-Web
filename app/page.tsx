@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/localdb/engine';
 import GraphCanvas from '@/components/GraphCanvas';
 
 export const metadata: Metadata = {
@@ -27,14 +27,20 @@ const FEATURES = [
     desc: 'Cosine similarity over GNN embeddings powers three substitute types: Functional Substitutes, Aromatic Pairings, and Complementary pairings.',
     color: '#f59e0b',
   },
+  {
+    icon: '🎯',
+    title: 'Context-Aware Reranking',
+    desc: 'Supply a recipe name or ingredient list to trigger context-aware reranking: final = α × GastroGraph score + β × recipe co-occurrence fit (α=0.60, β=0.40).',
+    color: '#34d399',
+  },
 ];
 
 async function getStats() {
   try {
     const [ingr, mols, edges] = await Promise.all([
-      supabase.from('nodes').select('id', { count: 'exact', head: true }).eq('type', 'ingredient'),
-      supabase.from('nodes').select('id', { count: 'exact', head: true }).eq('type', 'molecule'),
-      supabase.from('edges').select('id', { count: 'exact', head: true }),
+      db.from('nodes').select('id', { count: 'exact', head: true }).eq('type', 'ingredient'),
+      db.from('nodes').select('id', { count: 'exact', head: true }).eq('type', 'molecule'),
+      db.from('edges').select('id', { count: 'exact', head: true }),
     ]);
     return {
       ingredients: ingr.count ?? 6653,
@@ -74,7 +80,7 @@ export default async function HomePage() {
         <div className="container" style={{ position: 'relative', zIndex: 10, textAlign: 'center' }}>
           {/* Eyebrow */}
           <div className="badge badge-green anim-fade-up" style={{ marginBottom: 24, display: 'inline-flex' }}>
-            ✦ Powered by GraphSAGE GNN
+            ✦ GraphSAGE GNN · Context-Aware Reranking
           </div>
 
           <h1 className="anim-fade-up" style={{
@@ -106,6 +112,12 @@ export default async function HomePage() {
           }}>
             <Link href="/finder" className="btn-primary">
               🔍 Find Substitutes
+            </Link>
+            <Link href="/context" className="btn-primary" style={{
+              background: 'linear-gradient(135deg, rgba(124,92,252,0.9), rgba(0,212,170,0.9))',
+              boxShadow: '0 0 20px rgba(124,92,252,0.3)',
+            }}>
+              🎯 Context Reranker
             </Link>
             <Link href="/ingredient-explorer" className="btn-ghost">
               🌐 Explore Graph
@@ -187,7 +199,7 @@ export default async function HomePage() {
               { step: '01', title: 'Build Graph', desc: 'Load ingredient + molecule CSVs, construct NetworkX graph with TF-IDF edge weights', icon: '📊' },
               { step: '02', title: 'Train GNN', desc: 'GraphSAGE learns 64-dim embeddings via link-prediction over 100 epochs', icon: '🧬' },
               { step: '03', title: 'Score Substitutes', desc: 'Cosine similarity + molecular overlap + aromatic context → ranked results', icon: '⚗️' },
-              { step: '04', title: 'Explore', desc: 'Browse the graph, search ingredients, discover substitutes and pairings', icon: '🔍' },
+              { step: '04', title: 'Context Rerank', desc: 'Provide a recipe name or ingredient list — substitutes reranked by recipe co-occurrence fit (α=0.60, β=0.40)', icon: '🎯' },
             ].map((s, i) => (
               <div key={i} style={{
                 padding: '32px 24px',
@@ -223,9 +235,17 @@ export default async function HomePage() {
             <p style={{ color: 'var(--text-secondary)', fontSize: 16, marginBottom: 32 }}>
               Search from {stats.ingredients.toLocaleString()} ingredients and discover functional substitutes, aromatic pairings, and complementary results
             </p>
-            <Link href="/finder" className="btn-primary" style={{ fontSize: 16, padding: '14px 32px' }}>
-              🚀 Launch Substitute Finder
-            </Link>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <Link href="/finder" className="btn-primary" style={{ fontSize: 16, padding: '14px 28px' }}>
+                🚀 Launch Substitute Finder
+              </Link>
+              <Link href="/context" className="btn-ghost" style={{
+                fontSize: 16, padding: '14px 28px',
+                borderColor: 'rgba(0,212,170,0.5)', color: 'var(--accent)',
+              }}>
+                🎯 Try Context Reranker
+              </Link>
+            </div>
           </div>
         </div>
       </section>
