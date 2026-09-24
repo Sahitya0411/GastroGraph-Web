@@ -7,6 +7,7 @@ const LINKS = [
   { href: '/',                    label: 'Home' },
   { href: '/ingredient-explorer', label: 'Explorer' },
   { href: '/finder',              label: 'Substitute Finder' },
+  { href: '/context',             label: 'Context Reranker' },
   { href: '/about',               label: 'About' },
 ];
 
