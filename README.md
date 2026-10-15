@@ -13,7 +13,9 @@ GastroGraph is a full-stack research platform that models culinary ingredients a
 | 🕸️ **Knowledge Graph** | 8,298 nodes (6,653 ingredients + 1,645 molecules) connected by 147,179 edges with TF-IDF weighting |
 | 🧠 **GraphSAGE Embeddings** | Two-layer GNN producing 64-dimensional node embeddings trained via link prediction |
 | 🔄 **Substitute Finder** | Functional, Aromatic, and Complementary substitute types with ranked scoring |
-| 🌐 **Interactive Graph Explorer** | Browse and visualise the full ingredient–molecule graph in the browser |
+| 🎯 **Context Reranker** | Re-ranks substitutes for a specific dish, fusing the GraphSAGE score with recipe co-occurrence fit |
+| 🍳 **RecipeDB Integration** | Live dish search, ingredients, nutrition and instructions from CoSyLab RecipeDB |
+| 🌐 **Interactive Graph Explorer** | Visualise an ingredient's co-pair and molecule neighbourhood; compare several ingredients at once |
 | 📊 **Ingredient Profiles** | Per-ingredient pages showing molecule count, category, group, and substitutes |
 | 📱 **Responsive Design** | Mobile-friendly dark-mode UI with animated transitions |
 
@@ -25,11 +27,10 @@ GastroGraph is a full-stack research platform that models culinary ingredients a
 |---|---|
 | Framework | [Next.js 16](https://nextjs.org) (App Router) |
 | Language | TypeScript 5 |
-| Database | [Supabase](https://supabase.com) (PostgreSQL) |
-| Graph Rendering | [Sigma.js](https://www.sigmajs.org) + [Graphology](https://graphology.github.io) + ForceAtlas2 |
+| Data | Local JSON tables in `data/db/` (served via Next.js API routes) + [CoSyLab RecipeDB API](https://cosylab.iiitd.edu.in) |
+| Graph Rendering | HTML Canvas (custom force layout) |
 | Charting | [Recharts](https://recharts.org) |
 | Styling | Vanilla CSS (custom design system via `globals.css`) |
-| Icons | [Lucide React](https://lucide.dev) |
 | Fonts | Space Grotesk, Inter (Google Fonts) |
 
 ---
@@ -44,10 +45,15 @@ GastroGraph-Web/
 │   ├── globals.css               # Global design system & tokens
 │   ├── about/
 │   │   └── page.tsx              # About page (team, methodology, data sources)
+│   ├── api/
+│   │   ├── db/route.ts           # Read-only query endpoint over data/db/*.json
+│   │   └── recipedb/route.ts     # Proxy to CoSyLab RecipeDB (search, recipe, nutrition, instructions)
+│   ├── context/
+│   │   └── page.tsx              # Context Reranker (recipe-aware substitution)
 │   ├── finder/
 │   │   └── page.tsx              # Substitute Finder (search + results)
 │   ├── ingredient-explorer/
-│   │   └── page.tsx              # Interactive graph explorer (Sigma.js)
+│   │   └── page.tsx              # Interactive graph explorer (canvas)
 │   └── ingredient/
 │       └── [name]/
 │           └── page.tsx          # Dynamic ingredient profile page
@@ -55,13 +61,16 @@ GastroGraph-Web/
 │   ├── Navbar.tsx                # Sticky responsive navigation bar
 │   ├── Footer.tsx                # Site footer
 │   └── GraphCanvas.tsx           # Animated hero background graph canvas
+├── data/
+│   └── db/                       # nodes.json, edges.json, substitutes.json (graph tables)
 ├── lib/
-│   └── supabase.ts               # Supabase client + shared TypeScript types
+│   ├── db.ts                     # Browser data client (via /api/db) + shared TypeScript types
+│   ├── localdb/                  # Query builder + server-side engine over data/db/*.json
+│   └── recipedb.ts               # RecipeDB types + ingredient normalisation
 ├── public/
 │   ├── GastroGraph2.png          # Logo
 │   ├── Dr_Ganesh_Bagler.jpg      # Team photo
-│   ├── sahitya.jpeg              # Team photo
-│   └── Tripti.jpg                # Team photo
+│   └── sahitya.jpeg              # Team photo
 ├── next.config.ts
 ├── tsconfig.json
 └── package.json
@@ -72,19 +81,28 @@ GastroGraph-Web/
 ## 🔭 Pages
 
 ### `/` : Home
-Landing page with an animated graph canvas hero, live stats fetched from Supabase (ingredient count, molecule count, edge count, categories), a feature-card section explaining the three-layer pipeline, and a pipeline visual with step-by-step breakdown.
+Landing page with an animated graph canvas hero, live stats computed from the graph tables (ingredient count, molecule count, edge count, categories), a feature-card section explaining the three-layer pipeline, and a pipeline visual with step-by-step breakdown.
 
 ### `/finder` : Substitute Finder
-Search bar with real-time autocomplete over all 6,653 ingredient names. On submit, queries Supabase for the ingredient node and its pre-computed substitutes, then renders **Functional**, **Aromatic**, and **Complement** result columns with cosine similarity scores and score bars.
+Search bar with real-time autocomplete over all 6,653 ingredient names (best matches first: exact, then prefix, then word, then substring). On submit, looks up the ingredient node and its pre-computed substitutes, then renders **Functional**, **Aromatic**, and **Complement** result columns with cosine similarity scores and score bars.
+
+### `/context` : Context Reranker
+Pick the ingredient to replace and a dish. Typing a dish name searches RecipeDB live; selecting a result auto-fills its ingredients and shows calories per serving, macros and step-by-step instructions. The top GastroGraph substitutes are then re-ranked for that dish:
+
+```
+final = 10 × (α · base_score + β · recipe_fit)      # default α = 0.60, β = 0.40
+```
+
+`recipe_fit` is the average `CO_OCCURS` weight between a candidate and the dish's ingredients. Results are shown side by side (context-blind baseline vs. context-aware), with rank shifts and the dish ingredients that boosted each candidate. α and β are adjustable with sliders; quick benchmark dishes (Chicken Biryani, Spaghetti Carbonara, …) are one click away.
 
 ### `/ingredient-explorer` : Graph Explorer
-Full interactive force-directed graph powered by Sigma.js and Graphology's ForceAtlas2 layout. Nodes are coloured by type (ingredient vs. molecule) with zoom, pan, and hover tooltips.
+Search with autocomplete and add one or more ingredients. The canvas draws each ingredient's co-pair ingredients and molecules as a force-directed graph; with several ingredients, shared co-pairs and shared molecules are highlighted. Molecule nodes can be toggled, hovering shows details, and clicking an ingredient opens its profile.
 
 ### `/ingredient/[name]` : Ingredient Profile
 Dynamic route for any ingredient. Shows the ingredient's category, group, connected molecule count, and its substitute recommendations.
 
 ### `/about` : About
-Project description, team bios (Dr. Ganesh Bagler, Sahitya Sharma, Tripti Kashyap), three-step methodology (Graph Construction → GraphSAGE Training → Substitution Scoring), model hyperparameter table, and data source table.
+Project description, team bios (Dr. Ganesh Bagler, Sahitya Sharma), three-step methodology (Graph Construction → GraphSAGE Training → Substitution Scoring), model hyperparameter table, and data source table.
 
 ---
 
@@ -135,6 +153,18 @@ score        = α·sim + β·mol_pct + γ·ctx
 
 ## 🗄️ Data Sources
 
+The web app reads three tables from `data/db/` (exported from the research pipeline, ~11 MB in total):
+
+| Table | Rows | Contents |
+|---|---|---|
+| `nodes.json` | 8,298 | Ingredient & molecule nodes (name, type, category, molecule count) |
+| `edges.json` | 147,179 | `CO_OCCURS` and `CONTAINS` edges with weights |
+| `substitutes.json` | 52,996 | Pre-computed functional / aromatic / complement substitutes per ingredient |
+
+They are loaded into memory once per server process and queried through `lib/localdb` (server components call it directly, client components go through `/api/db`), so the browser never downloads the full graph.
+
+These were built in the [research repo](https://github.com/Sahitya0411/GastroGraph) from:
+
 | File | Records | Description |
 |---|---|---|
 | `nodes_191120.csv` | 8,298 nodes | Ingredient & molecule nodes with type labels |
@@ -149,12 +179,12 @@ score        = α·sim + β·mol_pct + γ·ctx
 
 ### Prerequisites
 - **Node.js** ≥ 18
-- A [Supabase](https://supabase.com) project with the `nodes`, `edges`, and `substitutes` tables populated
+- A RecipeDB API key from [Foodoscope](https://www.foodoscope.com/) (optional; needed only for live recipe lookup, which works on the IIITD network)
 
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/Sahitya0411/GastroGraph.git
+git clone https://github.com/Sahitya0411/GastroGraph-Web.git
 cd GastroGraph-Web
 npm install
 ```
@@ -164,9 +194,11 @@ npm install
 Create a `.env.local` file in the project root:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+RECIPEDB_API_KEY=your-recipedb-api-key
+NEXT_PUBLIC_RECIPEDB_BASE_URL=http://cosylab.iiitd.edu.in:6969
 ```
+
+The graph data (`nodes`, `edges`, `substitutes`) ships with the repo in `data/db/`, so no database is needed. Without a RecipeDB key everything works except live dish search on the Context Reranker.
 
 ### 3. Run the development server
 
@@ -185,6 +217,12 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `npm start` | Start the production server |
 | `npm run lint` | Run ESLint |
 
+### Deploying
+
+The app deploys as a standard Next.js project (e.g. Vercel). `next.config.ts` bundles `data/db/*.json` with every server route, so no external database is required. Set `RECIPEDB_API_KEY` (and optionally `RECIPEDB_BASE_URL`) in the host's environment variables.
+
+> **Note:** the CoSyLab RecipeDB server only accepts requests from the IIIT Delhi network, so live dish search will report "RecipeDB unreachable" on hosts outside it. All graph features keep working.
+
 ---
 
 ## 👥 Team
@@ -192,14 +230,15 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | Name | Role |
 |---|---|
 | **Dr. Ganesh Bagler** | Professor · Computational Gastronomy: Research direction, methodology, model architecture |
-| **Sahitya Sharma** | Developer · ML Engineer: GraphSAGE training pipeline, embeddings, full-stack web platform |
-| **Tripti Kashyap** | Researcher · Data & Literature: Literature review, data collection and curation |
+| **Sahitya Sharma** | Developer · ML Engineer · Researcher: Literature review, data curation, GraphSAGE training pipeline, embeddings, full-stack web platform |
 
 ---
 
 ## 🔗 Links
 
+- **GitHub (web app):** [github.com/Sahitya0411/GastroGraph-Web](https://github.com/Sahitya0411/GastroGraph-Web)
 - **GitHub (ML research repo):** [github.com/Sahitya0411/GastroGraph](https://github.com/Sahitya0411/GastroGraph)
+- **RecipeDB API:** [foodoscope.com](https://www.foodoscope.com/) (API keys) · `cosylab.iiitd.edu.in:6969/recipe2-api`
 
 ---
 
